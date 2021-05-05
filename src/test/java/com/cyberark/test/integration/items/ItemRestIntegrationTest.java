@@ -1,59 +1,86 @@
 package com.cyberark.test.integration.items;
 
 import com.cyberark.items.entities.Item;
+import com.cyberark.items.entities.ItemRuleType;
 import com.cyberark.items.entities.ItemType;
+import com.cyberark.items.services.ItemService;
+import com.cyberark.items.services.RuleAssociationService;
 import com.cyberark.test.TestApp;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.ConfigFileApplicationContextInitializer;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.*;
-import org.springframework.http.client.ClientHttpResponse;
-import org.springframework.test.context.ContextConfiguration;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.springframework.web.client.ResponseErrorHandler;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.DefaultUriBuilderFactory;
+import org.springframework.test.web.reactive.server.WebTestClient;
 
-import java.io.IOException;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.http.HttpMethod.GET;
 
 @ExtendWith(SpringExtension.class)
-@ContextConfiguration(classes = {TestApp.class}, initializers = ConfigFileApplicationContextInitializer.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@ActiveProfiles("test")
+@SpringBootTest(classes = {TestApp.class}, properties = {"local.server.port=8080"}, webEnvironment = SpringBootTest.WebEnvironment.DEFINED_PORT)
 public class ItemRestIntegrationTest {
 
     @Autowired
-    private RestTemplate restTemplate;
+    private WebTestClient webTestClient;
+
+    @Autowired
+    private ItemService itemService;
+
+    @Autowired
+    private AtomicLong idCounter;
+
+    @Autowired
+    private Map<ItemType, ItemRuleType> itemRuleTypeByItemType;
+
+    @Autowired
+    private RuleAssociationService ruleAssociationService;
+
     private Item expectedItem;
 
     @BeforeAll
     public void init() {
-        restTemplate.setUriTemplateHandler(new DefaultUriBuilderFactory("http://localhost:8080/api"));
-        restTemplate.setErrorHandler(new IgnoreExceptionErrorHandler());
-
         expectedItem = new Item(1L, ItemType.T_SHIRT, 10, 20);
+    }
+
+    @BeforeEach
+    public void before() throws Exception {
+        itemService.clearItems();
+        itemRuleTypeByItemType.clear();
+        idCounter.set(0);
+        ((InitializingBean) itemService).afterPropertiesSet();
+        ((InitializingBean) ruleAssociationService).afterPropertiesSet();
     }
 
     @Test
     public void testGetAllItems() {
 
-        ResponseEntity<List<Item>> itemsResponse =
-                restTemplate.exchange("/items", GET, null,
-                        new ParameterizedTypeReference<List<Item>>() {
-                        });
-
-        assertThat(itemsResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-
-        List<Item> items = itemsResponse.getBody();
+        List<Item> items = webTestClient.get()
+                .uri("/items")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader().contentType(MediaType.APPLICATION_JSON)
+                .expectBody(new ParameterizedTypeReference<List<Item>>() {
+                })
+                .returnResult()
+                .getResponseBody();
 
         assertThat(items).isNotNull();
         assertThat(items.size()).isGreaterThan(0);
@@ -63,12 +90,8 @@ public class ItemRestIntegrationTest {
 
     @Test
     public void testGetItem() {
-        ResponseEntity<Item> itemResponse =
-                restTemplate.getForEntity("/items/" + expectedItem.getId(), Item.class);
 
-        assertThat(itemResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-
-        Item item = itemResponse.getBody();
+        Item item = invokeGetItem(expectedItem.getId());
 
         assertThat(item).isNotNull();
         assertThat(item).isEqualToComparingFieldByField(expectedItem);
@@ -76,83 +99,203 @@ public class ItemRestIntegrationTest {
 
     @Test
     public void testGetItemNotFound() {
-        ResponseEntity<Item> returnItem = restTemplate.getForEntity("/items/-1", Item.class);
 
-        assertThat(returnItem).isNotNull();
-        assertThat(returnItem.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        webTestClient.get()
+                .uri("/items/-1")
+                .exchange()
+                .expectStatus()
+                .isNotFound()
+                .expectBody();
     }
 
-    private HttpEntity<String> getCreateRequest(Item itemToCreate) throws JSONException {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
+    private HttpEntity<String> getCreateRequest(Item itemToCreate) {
 
-        JSONObject personJsonObject = new JSONObject();
-        personJsonObject.put("type", itemToCreate.getType());
-        personJsonObject.put("daysToExpire", itemToCreate.getDaysToExpire());
-        personJsonObject.put("price", itemToCreate.getPrice());
+        try {
 
-        return new HttpEntity<>(personJsonObject.toString(), headers);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            JSONObject personJsonObject = new JSONObject();
+            personJsonObject.put("type", itemToCreate.getType());
+            personJsonObject.put("daysToExpire", itemToCreate.getDaysToExpire());
+            personJsonObject.put("price", itemToCreate.getPrice());
+
+            return new HttpEntity<>(personJsonObject.toString(), headers);
+        } catch (JSONException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Test
-    public void testCreateItem() throws JSONException {
+    public void testCreateItem() {
         Item itemToCreate = new Item(ItemType.LAPTOP, 1, 2);
 
         HttpEntity<String> request = getCreateRequest(itemToCreate);
 
-        ResponseEntity<Item> itemCreateResponse = restTemplate.postForEntity("/items",
-                request,
-                Item.class);
+        Item createdReturnedItem = invokeCreateItem(request);
 
-        assertThat(itemCreateResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(createdReturnedItem).isNotNull();
+        assertThat(createdReturnedItem).isEqualToIgnoringGivenFields(itemToCreate, "id");
 
-        Item createReturnedItem = itemCreateResponse.getBody();
+        Item itemGetResponse = invokeGetItem(createdReturnedItem.getId());
 
-        assertThat(createReturnedItem).isNotNull();
-        assertThat(createReturnedItem).isEqualToIgnoringGivenFields(itemToCreate, "id");
-
-        ResponseEntity<Item> itemGetResponse =
-                restTemplate.getForEntity("/items/" + createReturnedItem.getId(), Item.class);
-
-        assertThat(itemGetResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-
-        Item getReturnedItem = itemCreateResponse.getBody();
-        assertThat(getReturnedItem).isEqualToComparingFieldByField(createReturnedItem);
+        assertThat(itemGetResponse).isEqualToComparingFieldByField(createdReturnedItem);
     }
 
     @Test
-    public void testSetItemRule() throws JSONException {
+    public void testSetItemRule() {
         Item itemToCreate = new Item(ItemType.LAPTOP, 1, 2);
 
         HttpEntity<String> request = getCreateRequest(itemToCreate);
 
-        ResponseEntity<Item> itemCreateResponse = restTemplate.postForEntity("/items",
-                request,
-                Item.class);
-
-        assertThat(itemCreateResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-
-        Item createReturnedItem = itemCreateResponse.getBody();
+        Item createReturnedItem = invokeCreateItem(request);
 
         assertThat(createReturnedItem).isNotNull();
         assertThat(createReturnedItem).isEqualToIgnoringGivenFields(itemToCreate, "id");
 
-
-        ResponseEntity<Void> responseEntity = restTemplate.exchange("/items/rules?itemType=" + createReturnedItem.getType() + "&itemRuleType=DEFAULT_RULE", HttpMethod.PUT, null, Void.class);
-
-		assertThat(responseEntity.getStatusCode()).isEqualTo(HttpStatus.OK);
+        invokeChangeItemRule(createReturnedItem.getType(), ItemRuleType.GAINS_VALUE_WITH_AGE);
     }
 
-    private class IgnoreExceptionErrorHandler implements ResponseErrorHandler {
-        @Override
-        public boolean hasError(ClientHttpResponse response) throws IOException {
-            return response.getStatusCode() != HttpStatus.OK ||
-                    response.getStatusCode() != HttpStatus.ACCEPTED;
-        }
+    @Test
+    public void testDailyUpdate() {
 
-        @Override
-        public void handleError(ClientHttpResponse response) throws IOException {
-            // Do nothing in order to make sure no exception is thrown
-        }
+        invokeChangeItemRule(ItemType.T_SHIRT, ItemRuleType.GAINS_VALUE_WITH_AGE);
+
+        invokeDailyUpdate();
+
+        Item item = invokeGetItem(expectedItem.getId());
+
+        Item expectedUpdatedItem = new Item(expectedItem.getId(), expectedItem.getType(), expectedItem.getDaysToExpire(), expectedItem.getPrice() + 1);
+
+        assertThat(item).isEqualToComparingFieldByField(expectedUpdatedItem);
+    }
+
+    @Test
+    public void testSetItemRuleNotAffectingOtherItems() {
+
+        invokeChangeItemRule(ItemType.BANANA, ItemRuleType.GAINS_VALUE_WITH_AGE);
+
+        invokeDailyUpdate();
+
+        Item bananaResponseItem = invokeGetItem(7);
+
+        Item expectedBananaItem = new Item(7, ItemType.BANANA, 3, 3);
+
+        assertThat(bananaResponseItem).isEqualToComparingFieldByField(expectedBananaItem);
+
+        Item beerResponseItem = invokeGetItem(3);
+
+        Item expectedBeerItem = new Item(3, ItemType.BEER, 4, 6);
+
+        assertThat(beerResponseItem).isEqualToComparingFieldByField(expectedBeerItem);
+    }
+
+    @Test
+    public void testSetItemRuleAndItemLosingTwiceAsMuchValue() {
+
+        invokeChangeItemRule(ItemType.BASKETBALL, ItemRuleType.LOSES_CONSTANT_VALUE_WITH_AGE);
+
+        invokeDailyUpdate();
+
+        Item basketBall = invokeGetItem(5);
+
+        Item expectedBasketballItem = new Item(5, ItemType.BASKETBALL, -1, 48);
+
+        assertThat(basketBall).isEqualToComparingFieldByField(expectedBasketballItem);
+    }
+
+    @Test
+    public void testItemAffectedByRulesChange() {
+
+        invokeChangeItemRule(ItemType.LAPTOP, ItemRuleType.LOSES_CONSTANT_PERCENT_WITH_AGE);
+
+        invokeDailyUpdate();
+        invokeDailyUpdate();
+
+        Item laptopUpdatedItem = invokeGetItem(6);
+
+        Item expectedUpdatedLaptop = new Item(6, ItemType.LAPTOP, 363, 451);
+
+        assertThat(laptopUpdatedItem).isEqualToComparingFieldByField(expectedUpdatedLaptop);
+
+        invokeChangeItemRule(ItemType.LAPTOP, ItemRuleType.GAINS_VALUE_WITH_AGE);
+
+        invokeDailyUpdate();
+
+        Item laptopItem = invokeGetItem(6);
+
+        Item expectedItem = new Item(6, ItemType.LAPTOP, 363, 452);
+        assertThat(laptopItem).isEqualToComparingFieldByField(expectedItem);
+
+    }
+
+    @Test
+    public void testNewItemAffectedByRulesChange() {
+
+        Item newBanana = new Item(ItemType.BANANA, 2, 40);
+        HttpEntity<String> createRequest = getCreateRequest(newBanana);
+        Item createdBananaResponse = invokeCreateItem(createRequest);
+
+        Item expectedNewBanana = new Item(8, newBanana.getType(), newBanana.getDaysToExpire(), newBanana.getPrice());
+
+        assertThat(createdBananaResponse).isEqualToComparingFieldByField(expectedNewBanana);
+
+        invokeChangeItemRule(ItemType.BANANA, ItemRuleType.LOSES_CONSTANT_PERCENT_WITH_AGE);
+
+        invokeDailyUpdate();
+        invokeDailyUpdate();
+
+        Item updateByRuleBanana = invokeGetItem(8);
+
+        Item expectedItemUpdatedByRule = new Item(8, ItemType.BANANA, 0, 34);
+
+        assertThat(updateByRuleBanana).isEqualToComparingFieldByField(expectedItemUpdatedByRule);
+    }
+
+    @Test
+    public void testInvalidItemId() {
+        webTestClient.get()
+                .uri("/items/null")
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
+
+    private void invokeChangeItemRule(ItemType itemType, ItemRuleType itemRuleType) {
+        webTestClient.put()
+                .uri(uriBuilder -> uriBuilder.path("/items/rules")
+                        .queryParam("itemType", itemType)
+                        .queryParam("itemRuleType", itemRuleType).build())
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    private Item invokeGetItem(long itemId) {
+        return webTestClient.get()
+                .uri("/items/" + itemId)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Item.class)
+                .returnResult()
+                .getResponseBody();
+    }
+
+    private void invokeDailyUpdate() {
+        webTestClient.put()
+                .uri("/items/dailyUpdate")
+                .exchange()
+                .expectStatus().isAccepted();
+    }
+
+    private Item invokeCreateItem(HttpEntity<String> request) {
+        return webTestClient.post()
+                .uri("/items")
+                .contentType(Objects.requireNonNull(request.getHeaders().getContentType()))
+                .bodyValue(Objects.requireNonNull(request.getBody()))
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody(Item.class)
+                .returnResult()
+                .getResponseBody();
     }
 }

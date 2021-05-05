@@ -4,49 +4,54 @@ import com.cyberark.items.entities.Item;
 import com.cyberark.items.entities.ItemRuleType;
 import com.cyberark.items.entities.ItemType;
 import com.cyberark.items.services.ItemService;
+import com.cyberark.items.services.RuleAssociationService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
 import java.util.List;
 
 @RestController
+@RequestMapping("/items")
+@Validated
 public class ItemController {
 
+    private final ItemService itemService;
+    private final RuleAssociationService ruleAssociationService;
+
     @Autowired
-    private ItemService itemService;
-
-    @GetMapping(path = "/api/items")
-    public ResponseEntity<List<Item>> findAllItems() {
-
-        throw new NotImplementedException();
+    public ItemController(final ItemService itemService, final RuleAssociationService ruleAssociationService) {
+        this.itemService = itemService;
+        this.ruleAssociationService = ruleAssociationService;
     }
 
-    @GetMapping(path = "/api/items/{id}")
-    public ResponseEntity<Item> getItem(@PathVariable(name = "id") Long itemId) {
-
-        throw new NotImplementedException();
+    @GetMapping
+    public List<Item> findAllItems() {
+        return itemService.getItems();
     }
 
-    @PostMapping(path = "/api/items")
-    @ResponseBody
-    public ResponseEntity<Item> createItem(@RequestBody Item item) {
-
-        throw new NotImplementedException();
+    @GetMapping(path = "/{id}")
+    public Item getItem(@Valid @NotNull @PathVariable(name = "id") long itemId) {
+        return itemService.getItem(itemId);
     }
 
-    @PutMapping(path = "/api/items/dailyUpdate")
-    @ResponseBody
-    public ResponseEntity<Void> dailyUpdate() {
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public Item createItem(@Valid @NotNull @RequestBody Item item) {
+        return itemService.addItem(item);
+    }
+
+    @PutMapping(path = "/dailyUpdate")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public void dailyUpdate() {
         itemService.dailyUpdateItems();
-        throw new NotImplementedException();
     }
 
-    @PutMapping(path = "/api/items/rules")
-    @ResponseBody
-    public ResponseEntity<Void> setItemRule(@RequestParam ItemType itemType, @RequestParam ItemRuleType itemRuleType) {
-
-       throw new NotImplementedException();
+    @PutMapping(path = "/rules")
+    public void setItemRule(@Valid @NotNull @RequestParam ItemType itemType,@Valid @NotNull @RequestParam ItemRuleType itemRuleType) {
+        ruleAssociationService.update(itemType, itemRuleType);
     }
 }

@@ -1,0 +1,37 @@
+[
+  {
+    "type": "T_SHIRT",
+    "daysToExpire": 10,
+    "price": 20
+  },
+  {
+    "type": "SCOTCH_BOTTLE",
+    "daysToExpire": 2,
+    "price": 40
+  },
+  {
+    "type": "BEER",
+    "daysToExpire": 5,
+    "price": 7
+  },
+  {
+    "type": "BEER",
+    "daysToExpire": 10,
+    "price": 7
+  },
+  {
+    "type": "BASKETBALL",
+    "daysToExpire": 0,
+    "price": 50
+  },
+  {
+    "type": "LAPTOP",
+    "daysToExpire": 365,
+    "price": 500
+  },
+  {
+    "type": "BANANA",
+    "daysToExpire": 3,
+    "price": 2
+  }
+]

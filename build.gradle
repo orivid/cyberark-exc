@@ -1,5 +1,5 @@
 plugins {
-    id 'org.springframework.boot' version '2.2.2.RELEASE'
+    id 'org.springframework.boot' version '2.2.13.RELEASE'
     id 'io.spring.dependency-management' version '1.0.8.RELEASE'
     id 'java'
 }
@@ -14,9 +14,16 @@ repositories {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'com.google.guava:guava:30.1.1-jre'
     testImplementation('org.springframework.boot:spring-boot-starter-test') {
         exclude group: 'org.junit.vintage', module: 'junit-vintage-engine'
     }
+
+    testImplementation 'io.projectreactor:reactor-test:3.4.5'
+    testImplementation 'io.projectreactor.netty:reactor-netty:1.0.6'
+    testImplementation 'io.projectreactor:reactor-core:3.4.5'
+    testImplementation 'io.netty:netty-handler:4.1.63.Final'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webflux:2.4.5'
 
     compileOnly 'org.projectlombok:lombok:1.18.20'
     annotationProcessor 'org.projectlombok:lombok:1.18.20'
